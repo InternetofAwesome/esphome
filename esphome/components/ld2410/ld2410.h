@@ -75,6 +75,7 @@ class LD2410Component final : public Component, public uart::UARTDevice {
 #ifdef USE_TEXT_SENSOR
   SUB_TEXT_SENSOR(version)
   SUB_TEXT_SENSOR(mac)
+  SUB_TEXT_SENSOR(calibration_status)
 #endif
 #ifdef USE_NUMBER
   SUB_NUMBER(light_threshold)
@@ -87,6 +88,7 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   SUB_SELECT(distance_resolution)
   SUB_SELECT(light_function)
   SUB_SELECT(out_pin_level)
+  SUB_SELECT(calibration_mode)
 #endif
 #ifdef USE_SWITCH
   SUB_SWITCH(bluetooth)
@@ -126,6 +128,7 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   void start_calibration(CalibrationMode mode, uint8_t delay_s, uint8_t sample_s);
   void apply_calibration();
   void discard_calibration();
+  void set_calibration_mode(CalibrationMode mode) { this->cal_mode_ = mode; }
   CalibrationState get_calibration_state() const { return this->cal_state_; }
   // Returns human-readable status for a text_sensor (e.g. "delay 7/10s", "sampling 23/60s").
   std::string get_calibration_status_str() const;

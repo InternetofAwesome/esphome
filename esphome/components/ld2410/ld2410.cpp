@@ -215,6 +215,7 @@ void LD2410Component::dump_config() {
   ESP_LOGCONFIG(TAG, "Text Sensors:");
   LOG_TEXT_SENSOR("  ", "Mac", this->mac_text_sensor_);
   LOG_TEXT_SENSOR("  ", "Version", this->version_text_sensor_);
+  LOG_TEXT_SENSOR("  ", "CalibrationStatus", this->calibration_status_text_sensor_);
 #endif
 #ifdef USE_NUMBER
   ESP_LOGCONFIG(TAG, "Numbers:");
@@ -235,6 +236,7 @@ void LD2410Component::dump_config() {
   LOG_SELECT("  ", "DistanceResolution", this->distance_resolution_select_);
   LOG_SELECT("  ", "LightFunction", this->light_function_select_);
   LOG_SELECT("  ", "OutPinLevel", this->out_pin_level_select_);
+  LOG_SELECT("  ", "CalibrationMode", this->calibration_mode_select_);
 #endif
 #ifdef USE_SWITCH
   ESP_LOGCONFIG(TAG, "Switches:");
@@ -897,6 +899,16 @@ std::string LD2410Component::get_calibration_status_str() const {
 }
 
 void LD2410Component::tick_calibration_() {
+#ifdef USE_TEXT_SENSOR
+  if (this->calibration_status_text_sensor_ != nullptr) {
+    std::string status = this->get_calibration_status_str();
+    if (!this->calibration_status_text_sensor_->has_state() ||
+        this->calibration_status_text_sensor_->state != status) {
+      this->calibration_status_text_sensor_->publish_state(status);
+    }
+  }
+#endif
+
   if (this->cal_state_ == CalibrationState::IDLE || this->cal_state_ == CalibrationState::READY ||
       this->cal_state_ == CalibrationState::APPLYING || this->cal_state_ == CalibrationState::FW_SUCCESS ||
       this->cal_state_ == CalibrationState::FW_FAILED) {

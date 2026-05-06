@@ -16,11 +16,14 @@ from .. import CONF_LD2410_ID, LD2410Component, ld2410_ns
 BaudRateSelect = ld2410_ns.class_("BaudRateSelect", select.Select)
 DistanceResolutionSelect = ld2410_ns.class_("DistanceResolutionSelect", select.Select)
 LightOutControlSelect = ld2410_ns.class_("LightOutControlSelect", select.Select)
+CalibrationModeSelect = ld2410_ns.class_("CalibrationModeSelect", select.Select)
 
 CONF_DISTANCE_RESOLUTION = "distance_resolution"
 CONF_LIGHT_FUNCTION = "light_function"
 CONF_OUT_PIN_LEVEL = "out_pin_level"
+CONF_CALIBRATION_MODE = "calibration_mode"
 
+CALIBRATION_MODE_OPTIONS = ["Off", "Average", "Maximum", "Intelligent"]
 
 CONFIG_SCHEMA = {
     cv.GenerateID(CONF_ID): cv.declare_id(cg.EntityBase),
@@ -44,6 +47,10 @@ CONFIG_SCHEMA = {
         BaudRateSelect,
         entity_category=ENTITY_CATEGORY_CONFIG,
         icon=ICON_THERMOMETER,
+    ),
+    cv.Optional(CONF_CALIBRATION_MODE): select.select_schema(
+        CalibrationModeSelect,
+        entity_category=ENTITY_CATEGORY_CONFIG,
     ),
 }
 
@@ -82,3 +89,9 @@ async def to_code(config):
         )
         await cg.register_parented(s, config[CONF_LD2410_ID])
         cg.add(ld2410_component.set_baud_rate_select(s))
+    if calibration_mode_config := config.get(CONF_CALIBRATION_MODE):
+        s = await select.new_select(
+            calibration_mode_config, options=CALIBRATION_MODE_OPTIONS
+        )
+        await cg.register_parented(s, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_calibration_mode_select(s))
