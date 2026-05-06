@@ -38,6 +38,25 @@ using namespace ld24xx;
 static constexpr uint8_t MAX_LINE_LENGTH = 50;
 static constexpr uint8_t TOTAL_GATES = 9;  // Total number of gates supported by the LD2410
 
+enum class CalibrationMode : uint8_t {
+  OFF = 0,
+  AVERAGE = 1,
+  MAXIMUM = 2,
+  INTELLIGENT = 3,
+};
+
+enum class CalibrationState : uint8_t {
+  IDLE = 0,
+  DELAY = 1,      // countdown before sampling begins
+  SAMPLING = 2,   // collecting energy data (Average/Maximum)
+  READY = 3,      // thresholds computed, awaiting apply/discard
+  APPLYING = 4,   // writing thresholds to device
+  // Intelligent-mode firmware states
+  FW_WAITING = 5,   // firmware sampling in progress
+  FW_SUCCESS = 6,
+  FW_FAILED = 7,
+};
+
 class LD2410Component final : public Component, public uart::UARTDevice {
 #ifdef USE_BINARY_SENSOR
   SUB_BINARY_SENSOR(out_pin_presence_status)
@@ -103,6 +122,14 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   void set_baud_rate(const char *state);
   void factory_reset();
 
+  // Calibration API — entities and actions call these.
+  void start_calibration(CalibrationMode mode, uint8_t delay_s, uint8_t sample_s);
+  void apply_calibration();
+  void discard_calibration();
+  CalibrationState get_calibration_state() const { return this->cal_state_; }
+  // Returns human-readable status for a text_sensor (e.g. "delay 7/10s", "sampling 23/60s").
+  std::string get_calibration_status_str() const;
+
  protected:
   void send_command_(uint8_t command_str, const uint8_t *command_value, uint8_t command_value_len);
   void set_config_mode_(bool enable);
@@ -115,6 +142,10 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   void get_distance_resolution_();
   void query_light_control_();
   void restart_();
+
+  void tick_calibration_();
+  void compute_thresholds_();
+  void apply_thresholds_();
 
   uint8_t light_function_ = 0;
   uint8_t light_threshold_ = 0;
@@ -132,6 +163,32 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   std::array<SensorWithDedup<uint8_t>, TOTAL_GATES> gate_move_sensors_{};
   std::array<SensorWithDedup<uint8_t>, TOTAL_GATES> gate_still_sensors_{};
 #endif
+
+  // Latest per-gate energies captured from engineering-mode frames.
+  // Populated whenever engineering mode is active, regardless of whether the
+  // user has configured gate energy sensors — calibration needs them without
+  // requiring sensor entities to be declared.
+  std::array<uint8_t, TOTAL_GATES> latest_move_energy_{};
+  std::array<uint8_t, TOTAL_GATES> latest_still_energy_{};
+
+  // Calibration state machine
+  CalibrationState cal_state_{CalibrationState::IDLE};
+  CalibrationMode cal_mode_{CalibrationMode::OFF};
+  uint8_t cal_delay_s_{10};
+  uint8_t cal_sample_s_{60};
+  uint32_t cal_phase_start_ms_{0};
+  uint32_t cal_last_poll_ms_{0};
+  uint16_t cal_samples_collected_{0};
+
+  // Accumulators for Average/Maximum: [gate][move/still], indexed 0=move 1=still
+  std::array<uint32_t, TOTAL_GATES> cal_move_accum_{};
+  std::array<uint32_t, TOTAL_GATES> cal_still_accum_{};
+  std::array<uint8_t, TOTAL_GATES> cal_move_max_{};
+  std::array<uint8_t, TOTAL_GATES> cal_still_max_{};
+
+  // Computed thresholds ready to apply
+  std::array<uint8_t, TOTAL_GATES> cal_move_result_{};
+  std::array<uint8_t, TOTAL_GATES> cal_still_result_{};
 };
 
 }  // namespace esphome::ld2410

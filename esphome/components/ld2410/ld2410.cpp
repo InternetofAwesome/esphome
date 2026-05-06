@@ -137,6 +137,8 @@ template<size_t N> const char *find_str(const Uint8ToString (&arr)[N], uint8_t v
 }
 
 // Commands
+static constexpr uint8_t CMD_AUTO_THRESHOLD = 0x0B;        // Intelligent calibration (fw v2.44+)
+static constexpr uint8_t CMD_AUTO_THRESHOLD_QUERY = 0x1B;  // Poll Intelligent calibration status
 static constexpr uint8_t CMD_ENABLE_CONF = 0xFF;
 static constexpr uint8_t CMD_DISABLE_CONF = 0xFE;
 static constexpr uint8_t CMD_ENABLE_ENG = 0x62;
@@ -287,6 +289,7 @@ void LD2410Component::loop() {
       this->readline_(buf[i]);
     }
   }
+  this->tick_calibration_();
 }
 
 void LD2410Component::send_command_(uint8_t command, const uint8_t *command_value, uint8_t command_value_len) {
@@ -375,13 +378,15 @@ void LD2410Component::handle_periodic_data_() {
       Moving energy: 20~28th bytes
     */
     for (uint8_t i = 0; i < TOTAL_GATES; i++) {
-      SAFE_PUBLISH_SENSOR(this->gate_move_sensors_[i], this->buffer_data_[MOVING_SENSOR_START + i]);
+      this->latest_move_energy_[i] = this->buffer_data_[MOVING_SENSOR_START + i];
+      SAFE_PUBLISH_SENSOR(this->gate_move_sensors_[i], this->latest_move_energy_[i]);
     }
     /*
       Still energy: 29~37th bytes
     */
     for (uint8_t i = 0; i < TOTAL_GATES; i++) {
-      SAFE_PUBLISH_SENSOR(this->gate_still_sensors_[i], this->buffer_data_[STILL_SENSOR_START + i]);
+      this->latest_still_energy_[i] = this->buffer_data_[STILL_SENSOR_START + i];
+      SAFE_PUBLISH_SENSOR(this->gate_still_sensors_[i], this->latest_still_energy_[i]);
     }
     /*
       Light sensor: 38th bytes
@@ -581,6 +586,26 @@ bool LD2410Component::handle_ack_data_() {
 #endif
       break;
     }
+    case CMD_AUTO_THRESHOLD:
+      ESP_LOGV(TAG, "Intelligent calibration started");
+      break;
+
+    case CMD_AUTO_THRESHOLD_QUERY: {
+      // Payload byte 10: 4=in_progress, 5=success, 6=fail
+      uint8_t fw_status = this->buffer_data_[10];
+      ESP_LOGV(TAG, "Intelligent calibration status: %u", fw_status);
+      if (fw_status == 5) {
+        this->cal_state_ = CalibrationState::FW_SUCCESS;
+        this->set_engineering_mode(false);
+        this->query_parameters_();
+      } else if (fw_status == 6) {
+        this->cal_state_ = CalibrationState::FW_FAILED;
+        this->set_engineering_mode(false);
+      }
+      // 4 = still in progress; stay in FW_WAITING and keep polling
+      break;
+    }
+
     default:
       break;
   }
@@ -794,5 +819,167 @@ void LD2410Component::set_gate_still_sensor(uint8_t gate, sensor::Sensor *s) {
   this->gate_still_sensors_[gate].set_sensor(s);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// Calibration
+// ---------------------------------------------------------------------------
+
+void LD2410Component::start_calibration(CalibrationMode mode, uint8_t delay_s, uint8_t sample_s) {
+  if (mode == CalibrationMode::OFF) {
+    this->discard_calibration();
+    return;
+  }
+  this->cal_mode_ = mode;
+  this->cal_delay_s_ = delay_s;
+  this->cal_sample_s_ = sample_s;
+  this->cal_phase_start_ms_ = millis();
+  this->cal_samples_collected_ = 0;
+  this->cal_move_accum_.fill(0);
+  this->cal_still_accum_.fill(0);
+  this->cal_move_max_.fill(0);
+  this->cal_still_max_.fill(0);
+  this->cal_state_ = CalibrationState::DELAY;
+
+  if (mode == CalibrationMode::INTELLIGENT) {
+    // No engineering mode needed; firmware samples internally.
+    return;
+  }
+  // Average / Maximum need engineering mode so we receive per-gate energies.
+  this->set_engineering_mode(true);
+}
+
+void LD2410Component::apply_calibration() {
+  if (this->cal_state_ != CalibrationState::READY)
+    return;
+  this->cal_state_ = CalibrationState::APPLYING;
+  this->apply_thresholds_();
+}
+
+void LD2410Component::discard_calibration() {
+  if (this->cal_state_ == CalibrationState::SAMPLING || this->cal_state_ == CalibrationState::DELAY) {
+    if (this->cal_mode_ != CalibrationMode::INTELLIGENT)
+      this->set_engineering_mode(false);
+  }
+  this->cal_state_ = CalibrationState::IDLE;
+}
+
+std::string LD2410Component::get_calibration_status_str() const {
+  uint32_t elapsed_ms = millis() - this->cal_phase_start_ms_;
+  switch (this->cal_state_) {
+    case CalibrationState::IDLE:
+      return "idle";
+    case CalibrationState::DELAY: {
+      uint32_t elapsed_s = elapsed_ms / 1000;
+      uint32_t remaining = (elapsed_s < this->cal_delay_s_) ? (this->cal_delay_s_ - elapsed_s) : 0;
+      char buf[24];
+      snprintf(buf, sizeof(buf), "delay %" PRIu32 "/%" PRIu8 "s", remaining, this->cal_delay_s_);
+      return buf;
+    }
+    case CalibrationState::SAMPLING: {
+      uint32_t elapsed_s = elapsed_ms / 1000;
+      char buf[28];
+      snprintf(buf, sizeof(buf), "sampling %" PRIu32 "/%" PRIu8 "s", elapsed_s, this->cal_sample_s_);
+      return buf;
+    }
+    case CalibrationState::READY:
+      return "ready to apply";
+    case CalibrationState::APPLYING:
+      return "applying";
+    case CalibrationState::FW_WAITING:
+      return "firmware: in progress";
+    case CalibrationState::FW_SUCCESS:
+      return "firmware: success";
+    case CalibrationState::FW_FAILED:
+      return "firmware: failed";
+    default:
+      return "idle";
+  }
+}
+
+void LD2410Component::tick_calibration_() {
+  if (this->cal_state_ == CalibrationState::IDLE || this->cal_state_ == CalibrationState::READY ||
+      this->cal_state_ == CalibrationState::APPLYING || this->cal_state_ == CalibrationState::FW_SUCCESS ||
+      this->cal_state_ == CalibrationState::FW_FAILED) {
+    return;
+  }
+
+  uint32_t now = millis();
+  uint32_t elapsed_ms = now - this->cal_phase_start_ms_;
+
+  if (this->cal_state_ == CalibrationState::DELAY) {
+    if (elapsed_ms >= (uint32_t) this->cal_delay_s_ * 1000) {
+      this->cal_phase_start_ms_ = now;
+      if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
+        // Tell firmware to start its internal calibration.
+        this->set_config_mode_(true);
+        const uint8_t payload[1] = {this->cal_delay_s_};
+        this->send_command_(CMD_AUTO_THRESHOLD, payload, sizeof(payload));
+        this->set_config_mode_(false);
+        this->cal_state_ = CalibrationState::FW_WAITING;
+      } else {
+        this->cal_state_ = CalibrationState::SAMPLING;
+      }
+    }
+    return;
+  }
+
+  if (this->cal_state_ == CalibrationState::SAMPLING) {
+    // Accumulate this tick's energy snapshot.
+    for (uint8_t i = 0; i < TOTAL_GATES; i++) {
+      this->cal_move_accum_[i] += this->latest_move_energy_[i];
+      this->cal_still_accum_[i] += this->latest_still_energy_[i];
+      if (this->latest_move_energy_[i] > this->cal_move_max_[i])
+        this->cal_move_max_[i] = this->latest_move_energy_[i];
+      if (this->latest_still_energy_[i] > this->cal_still_max_[i])
+        this->cal_still_max_[i] = this->latest_still_energy_[i];
+    }
+    this->cal_samples_collected_++;
+
+    if (elapsed_ms >= (uint32_t) this->cal_sample_s_ * 1000) {
+      this->compute_thresholds_();
+      this->set_engineering_mode(false);
+      this->cal_state_ = CalibrationState::READY;
+    }
+    return;
+  }
+
+  if (this->cal_state_ == CalibrationState::FW_WAITING) {
+    // Poll firmware status every 2 s.
+    if (now - this->cal_last_poll_ms_ >= 2000) {
+      this->cal_last_poll_ms_ = now;
+      this->set_config_mode_(true);
+      this->send_command_(CMD_AUTO_THRESHOLD_QUERY, nullptr, 0);
+      this->set_config_mode_(false);
+    }
+    return;
+  }
+}
+
+void LD2410Component::compute_thresholds_() {
+  if (this->cal_samples_collected_ == 0)
+    return;
+  for (uint8_t i = 0; i < TOTAL_GATES; i++) {
+    if (this->cal_mode_ == CalibrationMode::AVERAGE) {
+      this->cal_move_result_[i] = static_cast<uint8_t>(this->cal_move_accum_[i] / this->cal_samples_collected_);
+      this->cal_still_result_[i] = static_cast<uint8_t>(this->cal_still_accum_[i] / this->cal_samples_collected_);
+    } else {  // MAXIMUM
+      this->cal_move_result_[i] = this->cal_move_max_[i];
+      this->cal_still_result_[i] = this->cal_still_max_[i];
+    }
+  }
+}
+
+void LD2410Component::apply_thresholds_() {
+#ifdef USE_NUMBER
+  for (uint8_t i = 0; i < TOTAL_GATES; i++) {
+    if (this->gate_move_threshold_numbers_[i] != nullptr)
+      this->gate_move_threshold_numbers_[i]->publish_state(this->cal_move_result_[i]);
+    if (this->gate_still_threshold_numbers_[i] != nullptr)
+      this->gate_still_threshold_numbers_[i]->publish_state(this->cal_still_result_[i]);
+    this->set_gate_threshold(i);
+  }
+#endif
+  this->cal_state_ = CalibrationState::IDLE;
+}
 
 }  // namespace esphome::ld2410
