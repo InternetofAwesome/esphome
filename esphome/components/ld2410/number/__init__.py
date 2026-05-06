@@ -22,10 +22,14 @@ from .. import CONF_LD2410_ID, LD2410Component, ld2410_ns
 GateThresholdNumber = ld2410_ns.class_("GateThresholdNumber", number.Number)
 LightThresholdNumber = ld2410_ns.class_("LightThresholdNumber", number.Number)
 MaxDistanceTimeoutNumber = ld2410_ns.class_("MaxDistanceTimeoutNumber", number.Number)
+CalibrationDelayNumber = ld2410_ns.class_("CalibrationDelayNumber", number.Number)
+CalibrationSampleNumber = ld2410_ns.class_("CalibrationSampleNumber", number.Number)
 
 CONF_MAX_MOVE_DISTANCE_GATE = "max_move_distance_gate"
 CONF_MAX_STILL_DISTANCE_GATE = "max_still_distance_gate"
 CONF_LIGHT_THRESHOLD = "light_threshold"
+CONF_CALIBRATION_DELAY = "calibration_delay"
+CONF_CALIBRATION_SAMPLE = "calibration_sample"
 
 TIMEOUT_GROUP = "timeout"
 
@@ -56,6 +60,18 @@ CONFIG_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_ILLUMINANCE,
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon=ICON_LIGHTBULB,
+        ),
+        cv.Optional(CONF_CALIBRATION_DELAY): number.number_schema(
+            CalibrationDelayNumber,
+            unit_of_measurement=UNIT_SECOND,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon=ICON_TIMELAPSE,
+        ),
+        cv.Optional(CONF_CALIBRATION_SAMPLE): number.number_schema(
+            CalibrationSampleNumber,
+            unit_of_measurement=UNIT_SECOND,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon=ICON_TIMELAPSE,
         ),
     }
 )
@@ -111,6 +127,18 @@ async def to_code(config):
         )
         await cg.register_parented(n, config[CONF_LD2410_ID])
         cg.add(ld2410_component.set_light_threshold_number(n))
+    if calibration_delay_config := config.get(CONF_CALIBRATION_DELAY):
+        n = await number.new_number(
+            calibration_delay_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_calibration_delay_number(n))
+    if calibration_sample_config := config.get(CONF_CALIBRATION_SAMPLE):
+        n = await number.new_number(
+            calibration_sample_config, min_value=1, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_calibration_sample_number(n))
     for x in range(9):
         if gate_conf := config.get(f"g{x}"):
             move_config = gate_conf[CONF_MOVE_THRESHOLD]

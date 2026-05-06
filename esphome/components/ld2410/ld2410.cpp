@@ -223,6 +223,8 @@ void LD2410Component::dump_config() {
   LOG_NUMBER("  ", "MaxMoveDistanceGate", this->max_move_distance_gate_number_);
   LOG_NUMBER("  ", "MaxStillDistanceGate", this->max_still_distance_gate_number_);
   LOG_NUMBER("  ", "Timeout", this->timeout_number_);
+  LOG_NUMBER("  ", "CalibrationDelay", this->calibration_delay_number_);
+  LOG_NUMBER("  ", "CalibrationSample", this->calibration_sample_number_);
   for (number::Number *n : this->gate_move_threshold_numbers_) {
     LOG_NUMBER("  ", "MoveThreshold", n);
   }
@@ -248,6 +250,9 @@ void LD2410Component::dump_config() {
   LOG_BUTTON("  ", "FactoryReset", this->factory_reset_button_);
   LOG_BUTTON("  ", "Query", this->query_button_);
   LOG_BUTTON("  ", "Restart", this->restart_button_);
+  LOG_BUTTON("  ", "StartCalibration", this->start_calibration_button_);
+  LOG_BUTTON("  ", "ApplyCalibration", this->apply_calibration_button_);
+  LOG_BUTTON("  ", "DiscardCalibration", this->discard_calibration_button_);
 #endif
 }
 

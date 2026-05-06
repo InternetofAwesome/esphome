@@ -18,8 +18,14 @@ from .. import CONF_LD2410_ID, LD2410Component, ld2410_ns
 FactoryResetButton = ld2410_ns.class_("FactoryResetButton", button.Button)
 QueryButton = ld2410_ns.class_("QueryButton", button.Button)
 RestartButton = ld2410_ns.class_("RestartButton", button.Button)
+StartCalibrationButton = ld2410_ns.class_("StartCalibrationButton", button.Button)
+ApplyCalibrationButton = ld2410_ns.class_("ApplyCalibrationButton", button.Button)
+DiscardCalibrationButton = ld2410_ns.class_("DiscardCalibrationButton", button.Button)
 
 CONF_QUERY_PARAMS = "query_params"
+CONF_START_CALIBRATION = "start_calibration"
+CONF_APPLY_CALIBRATION = "apply_calibration"
+CONF_DISCARD_CALIBRATION = "discard_calibration"
 
 CONFIG_SCHEMA = {
     cv.GenerateID(CONF_ID): cv.declare_id(cg.EntityBase),
@@ -41,6 +47,18 @@ CONFIG_SCHEMA = {
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         icon=ICON_DATABASE,
     ),
+    cv.Optional(CONF_START_CALIBRATION): button.button_schema(
+        StartCalibrationButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ),
+    cv.Optional(CONF_APPLY_CALIBRATION): button.button_schema(
+        ApplyCalibrationButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ),
+    cv.Optional(CONF_DISCARD_CALIBRATION): button.button_schema(
+        DiscardCalibrationButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ),
 }
 
 
@@ -58,3 +76,15 @@ async def to_code(config):
         b = await button.new_button(query_params_config)
         await cg.register_parented(b, config[CONF_LD2410_ID])
         cg.add(ld2410_component.set_query_button(b))
+    if start_calibration_config := config.get(CONF_START_CALIBRATION):
+        b = await button.new_button(start_calibration_config)
+        await cg.register_parented(b, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_start_calibration_button(b))
+    if apply_calibration_config := config.get(CONF_APPLY_CALIBRATION):
+        b = await button.new_button(apply_calibration_config)
+        await cg.register_parented(b, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_apply_calibration_button(b))
+    if discard_calibration_config := config.get(CONF_DISCARD_CALIBRATION):
+        b = await button.new_button(discard_calibration_config)
+        await cg.register_parented(b, config[CONF_LD2410_ID])
+        cg.add(ld2410_component.set_discard_calibration_button(b))

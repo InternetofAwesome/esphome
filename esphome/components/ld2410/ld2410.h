@@ -82,6 +82,8 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   SUB_NUMBER(max_move_distance_gate)
   SUB_NUMBER(max_still_distance_gate)
   SUB_NUMBER(timeout)
+  SUB_NUMBER(calibration_delay)
+  SUB_NUMBER(calibration_sample)
 #endif
 #ifdef USE_SELECT
   SUB_SELECT(baud_rate)
@@ -98,6 +100,9 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   SUB_BUTTON(factory_reset)
   SUB_BUTTON(query)
   SUB_BUTTON(restart)
+  SUB_BUTTON(start_calibration)
+  SUB_BUTTON(apply_calibration)
+  SUB_BUTTON(discard_calibration)
 #endif
 
  public:
@@ -129,6 +134,11 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   void apply_calibration();
   void discard_calibration();
   void set_calibration_mode(CalibrationMode mode) { this->cal_mode_ = mode; }
+  CalibrationMode get_calibration_mode() const { return this->cal_mode_; }
+  void set_calibration_delay_s(uint8_t s) { this->cal_delay_s_ = s; }
+  uint8_t get_calibration_delay_s() const { return this->cal_delay_s_; }
+  void set_calibration_sample_s(uint8_t s) { this->cal_sample_s_ = s; }
+  uint8_t get_calibration_sample_s() const { return this->cal_sample_s_; }
   CalibrationState get_calibration_state() const { return this->cal_state_; }
   // Returns human-readable status for a text_sensor (e.g. "delay 7/10s", "sampling 23/60s").
   std::string get_calibration_status_str() const;
