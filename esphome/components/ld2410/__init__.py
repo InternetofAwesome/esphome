@@ -3,7 +3,7 @@ from esphome.automation import maybe_simple_id
 import esphome.codegen as cg
 from esphome.components import uart
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_PASSWORD, CONF_THROTTLE, CONF_TIMEOUT
+from esphome.const import CONF_ID, CONF_MODE, CONF_PASSWORD, CONF_THROTTLE, CONF_TIMEOUT
 
 AUTO_LOAD = ["ld24xx"]
 DEPENDENCIES = ["uart"]
@@ -81,10 +81,27 @@ CALIBRATION_ACTION_SCHEMA = maybe_simple_id(
     }
 )
 
+CONF_CALIBRATION_DELAY = "delay_s"
+CONF_CALIBRATION_SAMPLE = "sample_s"
+CALIBRATION_MODES = ["Off", "Average", "Maximum", "Intelligent"]
+
+START_CALIBRATION_ACTION_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_ID): cv.use_id(LD2410Component),
+        cv.Optional(CONF_MODE): cv.one_of(*CALIBRATION_MODES),
+        cv.Optional(CONF_CALIBRATION_DELAY): cv.templatable(cv.uint8_t),
+        cv.Optional(CONF_CALIBRATION_SAMPLE): cv.templatable(cv.uint8_t),
+    }
+)
 
 # Actions
 BluetoothPasswordSetAction = ld2410_ns.class_(
     "BluetoothPasswordSetAction", automation.Action
+)
+StartCalibrationAction = ld2410_ns.class_("StartCalibrationAction", automation.Action)
+ApplyCalibrationAction = ld2410_ns.class_("ApplyCalibrationAction", automation.Action)
+DiscardCalibrationAction = ld2410_ns.class_(
+    "DiscardCalibrationAction", automation.Action
 )
 
 
@@ -107,4 +124,45 @@ async def bluetooth_password_set_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, paren)
     template_ = await cg.templatable(config[CONF_PASSWORD], args, cg.std_string)
     cg.add(var.set_password(template_))
+    return var
+
+
+@automation.register_action(
+    "ld2410.start_calibration",
+    StartCalibrationAction,
+    START_CALIBRATION_ACTION_SCHEMA,
+)
+async def start_calibration_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    if mode_config := config.get(CONF_MODE):
+        cg.add(var.set_mode(CALIBRATION_MODES.index(mode_config)))
+    if delay_config := config.get(CONF_CALIBRATION_DELAY):
+        template_ = await cg.templatable(delay_config, args, cg.uint8)
+        cg.add(var.set_delay_s(template_))
+    if sample_config := config.get(CONF_CALIBRATION_SAMPLE):
+        template_ = await cg.templatable(sample_config, args, cg.uint8)
+        cg.add(var.set_sample_s(template_))
+    return var
+
+
+@automation.register_action(
+    "ld2410.apply_calibration",
+    ApplyCalibrationAction,
+    CALIBRATION_ACTION_SCHEMA,
+)
+async def apply_calibration_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    return var
+
+
+@automation.register_action(
+    "ld2410.discard_calibration",
+    DiscardCalibrationAction,
+    CALIBRATION_ACTION_SCHEMA,
+)
+async def discard_calibration_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
     return var
