@@ -131,6 +131,7 @@ async def bluetooth_password_set_to_code(config, action_id, template_arg, args):
     "ld2410.start_calibration",
     StartCalibrationAction,
     START_CALIBRATION_ACTION_SCHEMA,
+    synchronous=True,
 )
 async def start_calibration_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
@@ -150,6 +151,7 @@ async def start_calibration_to_code(config, action_id, template_arg, args):
     "ld2410.apply_calibration",
     ApplyCalibrationAction,
     CALIBRATION_ACTION_SCHEMA,
+    synchronous=False,
 )
 async def apply_calibration_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
@@ -161,6 +163,7 @@ async def apply_calibration_to_code(config, action_id, template_arg, args):
     "ld2410.discard_calibration",
     DiscardCalibrationAction,
     CALIBRATION_ACTION_SCHEMA,
+    synchronous=True,
 )
 async def discard_calibration_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
