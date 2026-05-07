@@ -2,9 +2,29 @@
 
 namespace esphome::ld2410 {
 
-void CalibrationSampleNumber::control(float value) {
+static const uint8_t DEFAULT_SAMPLE_S = 60;
+
+void CalibrationSampleNumber::setup() {
+  this->pref_ = this->make_entity_preference<uint8_t>();
+  uint8_t value;
+  if (!this->pref_.load(&value))
+    value = DEFAULT_SAMPLE_S;
+  this->parent_->set_calibration_sample_s(value);
   this->publish_state(value);
-  this->parent_->set_calibration_sample_s(static_cast<uint8_t>(value));
+}
+
+void CalibrationSampleNumber::control(float value) {
+  auto v = static_cast<uint8_t>(value);
+  this->pref_.save(&v);
+  this->publish_state(value);
+  this->parent_->set_calibration_sample_s(v);
+}
+
+void CalibrationSampleNumber::reset_preference() {
+  uint8_t value = DEFAULT_SAMPLE_S;
+  this->pref_.save(&value);
+  this->parent_->set_calibration_sample_s(value);
+  this->publish_state(value);
 }
 
 }  // namespace esphome::ld2410

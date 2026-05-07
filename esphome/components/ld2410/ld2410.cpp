@@ -2,6 +2,8 @@
 
 #ifdef USE_NUMBER
 #include "esphome/components/number/number.h"
+#include "number/calibration_delay_number.h"
+#include "number/calibration_sample_number.h"
 #endif
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
@@ -718,6 +720,12 @@ void LD2410Component::set_engineering_mode(bool enable) {
 void LD2410Component::factory_reset() {
   this->set_config_mode_(true);
   this->send_command_(CMD_RESET, nullptr, 0);
+#ifdef USE_NUMBER
+  if (this->calibration_delay_number_ != nullptr)
+    static_cast<CalibrationDelayNumber *>(this->calibration_delay_number_)->reset_preference();
+  if (this->calibration_sample_number_ != nullptr)
+    static_cast<CalibrationSampleNumber *>(this->calibration_sample_number_)->reset_preference();
+#endif
   this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
 }
 
