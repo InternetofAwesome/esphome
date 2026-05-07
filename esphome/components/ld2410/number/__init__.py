@@ -22,8 +22,8 @@ from .. import CONF_LD2410_ID, LD2410Component, ld2410_ns
 GateThresholdNumber = ld2410_ns.class_("GateThresholdNumber", number.Number)
 LightThresholdNumber = ld2410_ns.class_("LightThresholdNumber", number.Number)
 MaxDistanceTimeoutNumber = ld2410_ns.class_("MaxDistanceTimeoutNumber", number.Number)
-CalibrationDelayNumber = ld2410_ns.class_("CalibrationDelayNumber", number.Number)
-CalibrationSampleNumber = ld2410_ns.class_("CalibrationSampleNumber", number.Number)
+CalibrationDelayNumber = ld2410_ns.class_("CalibrationDelayNumber", cg.Component, number.Number)
+CalibrationSampleNumber = ld2410_ns.class_("CalibrationSampleNumber", cg.Component, number.Number)
 
 CONF_MAX_MOVE_DISTANCE_GATE = "max_move_distance_gate"
 CONF_MAX_STILL_DISTANCE_GATE = "max_still_distance_gate"
