@@ -599,17 +599,15 @@ bool LD2410Component::handle_ack_data_() {
       break;
 
     case CMD_AUTO_THRESHOLD_QUERY: {
-      // Payload byte 10: 4=in_progress, 5=success, 6=fail
+      // Payload byte 10: 0=not_started, 1=in_progress, 2=completed
       uint8_t fw_status = this->buffer_data_[10];
       ESP_LOGV(TAG, "Intelligent calibration status: %u", fw_status);
       this->set_config_mode_(false);
-      if (fw_status == 5) {
+      if (fw_status == 2) {
         this->cal_state_ = CalibrationState::FW_SUCCESS;
         this->query_parameters_();
-      } else if (fw_status == 6) {
-        this->cal_state_ = CalibrationState::FW_FAILED;
       }
-      // 4 = still in progress; stay in FW_WAITING and keep polling
+      // 0 or 1 = not started / in progress; stay in FW_WAITING and keep polling
       break;
     }
 
@@ -897,7 +895,7 @@ std::string LD2410Component::get_calibration_status_str() const {
     case CalibrationState::FW_SUCCESS:
       return "firmware: success";
     case CalibrationState::FW_FAILED:
-      return "firmware: failed";
+      return "firmware: failed";  // reserved, not currently returned by firmware
     default:
       return "idle";
   }
@@ -928,9 +926,10 @@ void LD2410Component::tick_calibration_() {
       this->cal_phase_start_ms_ = now;
       if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
         // Tell firmware to start its internal calibration.
+        // Payload: [timeout_seconds, 0x00] — 2 bytes.
         // Config mode is disabled in handle_ack_data_ on CMD_AUTO_THRESHOLD ACK.
         this->set_config_mode_(true);
-        const uint8_t payload[1] = {this->cal_delay_s_};
+        const uint8_t payload[2] = {this->cal_delay_s_, 0x00};
         this->send_command_(CMD_AUTO_THRESHOLD, payload, sizeof(payload));
         this->cal_state_ = CalibrationState::FW_WAITING;
       } else {
