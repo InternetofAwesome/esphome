@@ -595,19 +595,19 @@ bool LD2410Component::handle_ack_data_() {
     }
     case CMD_AUTO_THRESHOLD:
       ESP_LOGV(TAG, "Intelligent calibration started");
+      this->set_config_mode_(false);
       break;
 
     case CMD_AUTO_THRESHOLD_QUERY: {
       // Payload byte 10: 4=in_progress, 5=success, 6=fail
       uint8_t fw_status = this->buffer_data_[10];
       ESP_LOGV(TAG, "Intelligent calibration status: %u", fw_status);
+      this->set_config_mode_(false);
       if (fw_status == 5) {
         this->cal_state_ = CalibrationState::FW_SUCCESS;
-        this->set_engineering_mode(false);
         this->query_parameters_();
       } else if (fw_status == 6) {
         this->cal_state_ = CalibrationState::FW_FAILED;
-        this->set_engineering_mode(false);
       }
       // 4 = still in progress; stay in FW_WAITING and keep polling
       break;
@@ -928,10 +928,10 @@ void LD2410Component::tick_calibration_() {
       this->cal_phase_start_ms_ = now;
       if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
         // Tell firmware to start its internal calibration.
+        // Config mode is disabled in handle_ack_data_ on CMD_AUTO_THRESHOLD ACK.
         this->set_config_mode_(true);
         const uint8_t payload[1] = {this->cal_delay_s_};
         this->send_command_(CMD_AUTO_THRESHOLD, payload, sizeof(payload));
-        this->set_config_mode_(false);
         this->cal_state_ = CalibrationState::FW_WAITING;
       } else {
         this->cal_state_ = CalibrationState::SAMPLING;
@@ -961,12 +961,13 @@ void LD2410Component::tick_calibration_() {
   }
 
   if (this->cal_state_ == CalibrationState::FW_WAITING) {
-    // Poll firmware status every 2 s.
+    // Poll firmware status every 2 s. Config mode is enabled here and
+    // disabled in handle_ack_data_ once the response arrives, matching
+    // the pattern used by query_parameters_() and similar async commands.
     if (now - this->cal_last_poll_ms_ >= 2000) {
       this->cal_last_poll_ms_ = now;
       this->set_config_mode_(true);
       this->send_command_(CMD_AUTO_THRESHOLD_QUERY, nullptr, 0);
-      this->set_config_mode_(false);
     }
     return;
   }
