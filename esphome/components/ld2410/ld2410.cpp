@@ -927,10 +927,11 @@ void LD2410Component::tick_calibration_() {
       this->cal_phase_start_ms_ = now;
       if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
         ESP_LOGD(TAG, "Calibration: delay done, sending CMD_AUTO_THRESHOLD");
-        // Payload: [timeout_seconds, 0x00] — 2 bytes.
-        // Config mode is disabled in handle_ack_data_ on CMD_AUTO_THRESHOLD ACK.
+        // Payload: [pre_sampling_delay, 0x00] — firmware's own internal delay
+        // before it starts sampling. Fixed at 10s per reference implementation;
+        // cal_delay_s_ is our host-side UI countdown, not this value.
         this->set_config_mode_(true);
-        const uint8_t payload[2] = {this->cal_delay_s_, 0x00};
+        const uint8_t payload[2] = {0x0A, 0x00};
         this->send_command_(CMD_AUTO_THRESHOLD, payload, sizeof(payload));
         this->cal_state_ = CalibrationState::FW_WAITING;
       } else {
