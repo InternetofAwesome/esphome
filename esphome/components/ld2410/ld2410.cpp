@@ -442,7 +442,8 @@ bool LD2410Component::handle_ack_data_() {
     ESP_LOGE(TAG, "Invalid status");
     return true;
   }
-  if (this->buffer_data_[8] || this->buffer_data_[9]) {
+  // CMD_QUERY response legitimately has 0x01, 0x00 at bytes 8-9 (value head flag).
+  if (this->buffer_data_[COMMAND] != CMD_QUERY && (this->buffer_data_[8] || this->buffer_data_[9])) {
     ESP_LOGW(TAG, "Invalid command: %02X, %02X", this->buffer_data_[8], this->buffer_data_[9]);
     return true;
   }
