@@ -38,6 +38,33 @@ using namespace ld24xx;
 static constexpr uint8_t MAX_LINE_LENGTH = 50;
 static constexpr uint8_t TOTAL_GATES = 9;  // Total number of gates supported by the LD2410
 
+// Auto-calibration matches the three modes offered by HLKRadarTool.
+//
+// Workflow (Average / Maximum):
+//   1. Leave the room, press Start. Component counts down calibration_delay
+//      seconds, then enables engineering mode and samples per-gate energies
+//      for calibration_sample seconds.
+//   2. Status shows "ready to apply". Press Apply to write computed thresholds
+//      to the sensor one gate at a time, or Discard to abandon.
+//
+// Workflow (Intelligent):
+//   1. Press Start. Component counts down calibration_delay seconds, then
+//      sends CMD_AUTO_THRESHOLD (0x0B) to the firmware. Firmware runs its
+//      own internal sampling for ~120 s (fixed, not configurable).
+//   2. Component polls status (CMD_AUTO_THRESHOLD_QUERY, 0x1B) every 2 s.
+//      On completion the module restarts and thresholds are read back.
+//      Requires firmware v2.44+.
+//
+// Mode comparison:
+//   Average     — threshold = mean noise floor per gate. More sensitive;
+//                 lower thresholds mean smaller signals can trigger.
+//                 Vulnerable to transient noise inflating the mean.
+//   Maximum     — threshold = peak noise floor per gate. Less sensitive;
+//                 higher thresholds require a stronger signal to trigger.
+//                 Better in environments with intermittent background noise.
+//   Intelligent — firmware algorithm with undocumented internal headroom.
+//                 Recommended starting point; mirrors the vendor tool default.
+//                 calibration_sample setting is ignored in this mode.
 enum class CalibrationMode : uint8_t {
   OFF = 0,
   AVERAGE = 1,
