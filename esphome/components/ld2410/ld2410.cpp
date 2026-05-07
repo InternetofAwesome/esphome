@@ -606,7 +606,9 @@ bool LD2410Component::handle_ack_data_() {
       this->set_config_mode_(false);
       if (fw_status == 2) {
         this->cal_state_ = CalibrationState::FW_SUCCESS;
-        this->query_parameters_();
+        // Restart and re-read all parameters — firmware requires a restart
+        // before newly calibrated thresholds are visible via CMD_QUERY.
+        this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
       }
       // 0 or 1 = not started / in progress; stay in FW_WAITING and keep polling
       break;
