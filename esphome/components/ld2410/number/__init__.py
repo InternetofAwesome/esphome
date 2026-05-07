@@ -131,12 +131,14 @@ async def to_code(config):
         n = await number.new_number(
             calibration_delay_config, min_value=0, max_value=255, step=1
         )
+        await cg.register_component(n, calibration_delay_config)
         await cg.register_parented(n, config[CONF_LD2410_ID])
         cg.add(ld2410_component.set_calibration_delay_number(n))
     if calibration_sample_config := config.get(CONF_CALIBRATION_SAMPLE):
         n = await number.new_number(
             calibration_sample_config, min_value=1, max_value=255, step=1
         )
+        await cg.register_component(n, calibration_sample_config)
         await cg.register_parented(n, config[CONF_LD2410_ID])
         cg.add(ld2410_component.set_calibration_sample_number(n))
     for x in range(9):

@@ -1,12 +1,13 @@
 #pragma once
 
+#include "esphome/core/component.h"
 #include "esphome/components/number/number.h"
 #include "esphome/core/preferences.h"
 #include "../ld2410.h"
 
 namespace esphome::ld2410 {
 
-class CalibrationDelayNumber : public number::Number, public Parented<LD2410Component> {
+class CalibrationDelayNumber : public Component, public number::Number, public Parented<LD2410Component> {
  public:
   CalibrationDelayNumber() = default;
   void setup() override;
