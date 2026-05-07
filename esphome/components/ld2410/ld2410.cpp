@@ -830,6 +830,7 @@ void LD2410Component::set_gate_still_sensor(uint8_t gate, sensor::Sensor *s) {
 // ---------------------------------------------------------------------------
 
 void LD2410Component::start_calibration(CalibrationMode mode, uint8_t delay_s, uint8_t sample_s) {
+  ESP_LOGD(TAG, "start_calibration mode=%u delay=%us sample=%us", static_cast<uint8_t>(mode), delay_s, sample_s);
   if (mode == CalibrationMode::OFF) {
     this->discard_calibration();
     return;
@@ -925,7 +926,7 @@ void LD2410Component::tick_calibration_() {
     if (elapsed_ms >= (uint32_t) this->cal_delay_s_ * 1000) {
       this->cal_phase_start_ms_ = now;
       if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
-        // Tell firmware to start its internal calibration.
+        ESP_LOGD(TAG, "Calibration: delay done, sending CMD_AUTO_THRESHOLD");
         // Payload: [timeout_seconds, 0x00] — 2 bytes.
         // Config mode is disabled in handle_ack_data_ on CMD_AUTO_THRESHOLD ACK.
         this->set_config_mode_(true);
@@ -935,6 +936,16 @@ void LD2410Component::tick_calibration_() {
       } else {
         this->cal_state_ = CalibrationState::SAMPLING;
       }
+    }
+    return;
+  }
+
+  if (this->cal_state_ == CalibrationState::FW_WAITING) {
+    if (now - this->cal_last_poll_ms_ >= 2000) {
+      this->cal_last_poll_ms_ = now;
+      ESP_LOGD(TAG, "Calibration: polling firmware status");
+      this->set_config_mode_(true);
+      this->send_command_(CMD_AUTO_THRESHOLD_QUERY, nullptr, 0);
     }
     return;
   }
@@ -959,17 +970,6 @@ void LD2410Component::tick_calibration_() {
     return;
   }
 
-  if (this->cal_state_ == CalibrationState::FW_WAITING) {
-    // Poll firmware status every 2 s. Config mode is enabled here and
-    // disabled in handle_ack_data_ once the response arrives, matching
-    // the pattern used by query_parameters_() and similar async commands.
-    if (now - this->cal_last_poll_ms_ >= 2000) {
-      this->cal_last_poll_ms_ = now;
-      this->set_config_mode_(true);
-      this->send_command_(CMD_AUTO_THRESHOLD_QUERY, nullptr, 0);
-    }
-    return;
-  }
 }
 
 void LD2410Component::compute_thresholds_() {
