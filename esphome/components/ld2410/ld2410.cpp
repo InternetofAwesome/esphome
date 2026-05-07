@@ -540,8 +540,16 @@ bool LD2410Component::handle_ack_data_() {
       break;
     }
 
+    case CMD_MAXDIST_DURATION:
+      ESP_LOGV(TAG, "Max distance / timeout set");
+      this->set_config_mode_(false);
+      this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
+      break;
+
     case CMD_GATE_SENS:
       ESP_LOGV(TAG, "Sensitivity");
+      this->set_config_mode_(false);
+      this->query_parameters_();
       break;
 
     case CMD_BLUETOOTH:
@@ -554,6 +562,9 @@ bool LD2410Component::handle_ack_data_() {
 
     case CMD_SET_LIGHT_CONTROL:
       ESP_LOGV(TAG, "Set light control");
+      this->set_config_mode_(false);
+      this->query_light_control_();
+      this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
       break;
 
     case CMD_BT_PASSWORD:
@@ -754,9 +765,7 @@ void LD2410Component::set_max_distances_timeout() {
                        0x00};
   this->set_config_mode_(true);
   this->send_command_(CMD_MAXDIST_DURATION, value, sizeof(value));
-  this->query_parameters_();
-  this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
-  this->set_config_mode_(false);
+  // config mode disabled and query issued in handle_ack_data_ on CMD_MAXDIST_DURATION ACK
 }
 
 void LD2410Component::set_gate_threshold(uint8_t gate) {
@@ -783,8 +792,7 @@ void LD2410Component::set_gate_threshold(uint8_t gate) {
                        0x01, 0x00, lowbyte(motion), highbyte(motion), 0x00, 0x00,
                        0x02, 0x00, lowbyte(still),  highbyte(still),  0x00, 0x00};
   this->send_command_(CMD_GATE_SENS, value, sizeof(value));
-  this->query_parameters_();
-  this->set_config_mode_(false);
+  // config mode disabled and parameters re-read in handle_ack_data_ on CMD_GATE_SENS ACK
 }
 
 void LD2410Component::set_gate_still_threshold_number(uint8_t gate, number::Number *n) {
@@ -813,9 +821,7 @@ void LD2410Component::set_light_out_control() {
   this->set_config_mode_(true);
   uint8_t value[4] = {this->light_function_, this->light_threshold_, this->out_pin_level_, 0x00};
   this->send_command_(CMD_SET_LIGHT_CONTROL, value, sizeof(value));
-  this->query_light_control_();
-  this->set_timeout(200, [this]() { this->restart_and_read_all_info(); });
-  this->set_config_mode_(false);
+  // config mode disabled, light control re-read, and restart scheduled in handle_ack_data_
 }
 
 #ifdef USE_SENSOR
