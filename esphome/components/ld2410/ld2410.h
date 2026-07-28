@@ -49,22 +49,27 @@ static constexpr uint8_t TOTAL_GATES = 9;  // Total number of gates supported by
 //
 // Workflow (Intelligent):
 //   1. Press Start. Component counts down calibration_delay seconds, then
-//      sends CMD_AUTO_THRESHOLD (0x0B) to the firmware. Firmware runs its
-//      own internal sampling for ~120 s (fixed, not configurable).
+//      sends CMD_AUTO_THRESHOLD (0x0B) with calibration_sample as the
+//      firmware's sampling duration (little-endian uint16 seconds — this is
+//      a sampling window, not a pre-sampling delay; see README "Protocol
+//      notes" for how that was verified). Firmware samples internally for
+//      that long.
 //   2. Component polls status (CMD_AUTO_THRESHOLD_QUERY, 0x1B) every 2 s.
 //      On completion the module restarts and thresholds are read back.
 //      Requires firmware v2.44+.
 //
-// Mode comparison:
-//   Average     — threshold = mean noise floor per gate. More sensitive;
-//                 lower thresholds mean smaller signals can trigger.
-//                 Vulnerable to transient noise inflating the mean.
-//   Maximum     — threshold = peak noise floor per gate. Less sensitive;
-//                 higher thresholds require a stronger signal to trigger.
-//                 Better in environments with intermittent background noise.
+// Mode comparison (results are always clamped to the valid 0-100 threshold
+// range):
+//   Average     — threshold = mean + 2*stddev of the sampled per-gate noise.
+//                 More sensitive than Maximum: mean+2sigma typically sits
+//                 below the sampled peak, so smaller signals still trigger,
+//                 while still covering ~97.7% of a roughly-normal noise
+//                 distribution above the mean.
+//   Maximum     — threshold = observed peak + a fixed margin per gate. Less
+//                 sensitive; the margin guards against the short sampling
+//                 window having missed a slightly larger noise excursion.
 //   Intelligent — firmware algorithm with undocumented internal headroom.
 //                 Recommended starting point; mirrors the vendor tool default.
-//                 calibration_sample setting is ignored in this mode.
 enum class CalibrationMode : uint8_t {
   OFF = 0,
   AVERAGE = 1,
@@ -205,9 +210,10 @@ class LD2410Component final : public Component, public uart::UARTDevice {
 #endif
 
   // Latest per-gate energies captured from engineering-mode frames.
-  // Populated whenever engineering mode is active, regardless of whether the
-  // user has configured gate energy sensors — calibration needs them without
-  // requiring sensor entities to be declared.
+  // Populated in handle_periodic_data_() outside any USE_SENSOR guard,
+  // whenever engineering mode is active, regardless of whether the user has
+  // configured gate energy sensors or even built with USE_SENSOR at all —
+  // calibration needs them without requiring sensor entities to be declared.
   std::array<uint8_t, TOTAL_GATES> latest_move_energy_{};
   std::array<uint8_t, TOTAL_GATES> latest_still_energy_{};
 
@@ -218,11 +224,35 @@ class LD2410Component final : public Component, public uart::UARTDevice {
   uint8_t cal_sample_s_{60};
   uint32_t cal_phase_start_ms_{0};
   uint32_t cal_last_poll_ms_{0};
+  // Number of radar frames folded into the accumulators below. Incremented in
+  // handle_periodic_data_() once per received engineering-mode frame — NOT in
+  // tick_calibration_(), which runs once per main-loop iteration (hundreds to
+  // thousands of Hz). Counting per loop iteration would make this a loop-rate
+  // counter rather than a sample count: at ~500 Hz it would wrap this
+  // uint16_t (max 65535) more than twice in the current 255 s max sample
+  // window, and — independent of overflow — would weight "mean"/"stddev" by
+  // how long the loop happened to dwell on each frame rather than treating
+  // every frame equally, quietly tightening Average mode's mean+2sigma
+  // headroom. Counting per frame instead keeps this near the module's actual
+  // report rate (~10 Hz), so even at the max 255 s sample window it tops out
+  // around 2550 — comfortable headroom below 65535, and stable regardless of
+  // loop-rate jitter.
   uint16_t cal_samples_collected_{0};
 
-  // Accumulators for Average/Maximum: [gate][move/still], indexed 0=move 1=still
+  // Accumulators for Average/Maximum: [gate][move/still], indexed 0=move 1=still.
+  // Updated once per radar frame (see cal_samples_collected_ above), not per
+  // main-loop iteration.
   std::array<uint32_t, TOTAL_GATES> cal_move_accum_{};
   std::array<uint32_t, TOTAL_GATES> cal_still_accum_{};
+  // Sum of squared samples, used to derive per-gate stddev for Average mode
+  // (E[X^2] - E[X]^2). Energy is 0-100 and, per the frame-rate reasoning
+  // above, cal_samples_collected_ tops out around 2550 for the current max
+  // 255 s sample window, so the largest possible sum (100^2 * 2550 ≈ 2.55e7)
+  // sits far below the uint32_t ceiling — with ample margin even if a future
+  // revision widens the sample-duration range, since growth tracks real
+  // elapsed seconds at a fixed ~10 Hz frame rate, not loop iterations.
+  std::array<uint32_t, TOTAL_GATES> cal_move_sq_accum_{};
+  std::array<uint32_t, TOTAL_GATES> cal_still_sq_accum_{};
   std::array<uint8_t, TOTAL_GATES> cal_move_max_{};
   std::array<uint8_t, TOTAL_GATES> cal_still_max_{};
 

@@ -1,5 +1,7 @@
 #include "ld2410.h"
 
+#include <cmath>
+
 #ifdef USE_NUMBER
 #include "esphome/components/number/number.h"
 #include "number/calibration_delay_number.h"
@@ -379,22 +381,51 @@ void LD2410Component::handle_periodic_data_() {
   SAFE_PUBLISH_SENSOR(this->still_target_energy_sensor_, this->buffer_data_[STILL_ENERGY]);
   SAFE_PUBLISH_SENSOR(this->detection_distance_sensor_,
                       encode_uint16(this->buffer_data_[DETECT_DISTANCE_HIGH], this->buffer_data_[DETECT_DISTANCE_LOW]));
+#endif
 
+  /*
+    Moving distance range: 18th byte
+    Still distance range: 19th byte
+    Moving energy: 20~28th bytes
+    Still energy: 29~37th bytes
+  */
+  // Populated unconditionally (not gated on USE_SENSOR): calibration reads
+  // latest_move_energy_/latest_still_energy_ and must work even when no gate
+  // energy sensors are declared, or USE_SENSOR isn't defined at all.
   if (engineering_mode) {
-    /*
-      Moving distance range: 18th byte
-      Still distance range: 19th byte
-      Moving energy: 20~28th bytes
-    */
     for (uint8_t i = 0; i < TOTAL_GATES; i++) {
       this->latest_move_energy_[i] = this->buffer_data_[MOVING_SENSOR_START + i];
-      SAFE_PUBLISH_SENSOR(this->gate_move_sensors_[i], this->latest_move_energy_[i]);
     }
-    /*
-      Still energy: 29~37th bytes
-    */
     for (uint8_t i = 0; i < TOTAL_GATES; i++) {
       this->latest_still_energy_[i] = this->buffer_data_[STILL_SENSOR_START + i];
+    }
+
+    // Accumulate once per radar frame (~10 Hz), not once per main-loop
+    // iteration (hundreds-to-thousands of Hz) — see calibration accumulator
+    // comments in ld2410.h for why that distinction matters.
+    if (this->cal_state_ == CalibrationState::SAMPLING) {
+      for (uint8_t i = 0; i < TOTAL_GATES; i++) {
+        this->cal_move_accum_[i] += this->latest_move_energy_[i];
+        this->cal_still_accum_[i] += this->latest_still_energy_[i];
+        this->cal_move_sq_accum_[i] +=
+            static_cast<uint32_t>(this->latest_move_energy_[i]) * this->latest_move_energy_[i];
+        this->cal_still_sq_accum_[i] +=
+            static_cast<uint32_t>(this->latest_still_energy_[i]) * this->latest_still_energy_[i];
+        if (this->latest_move_energy_[i] > this->cal_move_max_[i])
+          this->cal_move_max_[i] = this->latest_move_energy_[i];
+        if (this->latest_still_energy_[i] > this->cal_still_max_[i])
+          this->cal_still_max_[i] = this->latest_still_energy_[i];
+      }
+      this->cal_samples_collected_++;
+    }
+  }
+
+#ifdef USE_SENSOR
+  if (engineering_mode) {
+    for (uint8_t i = 0; i < TOTAL_GATES; i++) {
+      SAFE_PUBLISH_SENSOR(this->gate_move_sensors_[i], this->latest_move_energy_[i]);
+    }
+    for (uint8_t i = 0; i < TOTAL_GATES; i++) {
       SAFE_PUBLISH_SENSOR(this->gate_still_sensors_[i], this->latest_still_energy_[i]);
     }
     /*
@@ -846,6 +877,40 @@ void LD2410Component::set_gate_still_sensor(uint8_t gate, sensor::Sensor *s) {
 // Calibration
 // ---------------------------------------------------------------------------
 
+// Headroom added on top of the observed peak in Maximum mode. Gate energy is
+// 0-100, the sampling window is short, and detection is a strict >, so a
+// threshold set exactly at the sampled peak still false-triggers on the next
+// noise excursion that's even fractionally larger. 5 points is small relative
+// to the 0-100 scale but comfortably covers that kind of overshoot.
+static constexpr uint8_t THRESHOLD_MAX_MARGIN = 5;
+
+// Standard-deviation multiplier for Average mode: threshold = mean + k*sigma.
+// k=2 covers ~97.7% of a roughly-normal noise distribution above the mean
+// (one-sided 2-sigma) while keeping Average meaningfully more sensitive than
+// Maximum — mean+2sigma is typically below the sampled peak, whereas Maximum
+// sits at-or-above it by construction.
+static constexpr float THRESHOLD_AVERAGE_K_SIGMA = 2.0f;
+
+// Clamp a computed threshold into the sensor's valid 0-100 range.
+static uint8_t clamp_threshold(int32_t value) {
+  if (value < 0)
+    return 0;
+  if (value > 100)
+    return 100;
+  return static_cast<uint8_t>(value);
+}
+
+// Derive an Average-mode threshold from running sum / sum-of-squares accumulators.
+// Using accumulators (rather than storing every sample) keeps RAM use O(1) per gate.
+static uint8_t compute_average_threshold(uint32_t sum, uint32_t sum_sq, uint16_t count) {
+  const float n = static_cast<float>(count);
+  const float mean = static_cast<float>(sum) / n;
+  // E[X^2] - E[X]^2; integer rounding can push this fractionally below 0, so clamp.
+  const float variance = std::max(0.0f, static_cast<float>(sum_sq) / n - mean * mean);
+  const float sigma = std::sqrt(variance);
+  return clamp_threshold(static_cast<int32_t>(std::lround(mean + THRESHOLD_AVERAGE_K_SIGMA * sigma)));
+}
+
 void LD2410Component::start_calibration(CalibrationMode mode, uint8_t delay_s, uint8_t sample_s) {
   if (mode == CalibrationMode::OFF) {
     this->discard_calibration();
@@ -858,6 +923,8 @@ void LD2410Component::start_calibration(CalibrationMode mode, uint8_t delay_s, u
   this->cal_samples_collected_ = 0;
   this->cal_move_accum_.fill(0);
   this->cal_still_accum_.fill(0);
+  this->cal_move_sq_accum_.fill(0);
+  this->cal_still_sq_accum_.fill(0);
   this->cal_move_max_.fill(0);
   this->cal_still_max_.fill(0);
   this->cal_state_ = CalibrationState::DELAY;
@@ -942,11 +1009,13 @@ void LD2410Component::tick_calibration_() {
     if (elapsed_ms >= (uint32_t) this->cal_delay_s_ * 1000) {
       this->cal_phase_start_ms_ = now;
       if (this->cal_mode_ == CalibrationMode::INTELLIGENT) {
-        // Payload: [pre_sampling_delay, 0x00] — firmware's own internal delay
-        // before it starts sampling. Fixed at 10s per reference implementation;
-        // cal_delay_s_ is our host-side UI countdown, not this value.
+        // Payload is the sampling duration in seconds, little-endian uint16 —
+        // NOT a pre-sampling delay (see README "Protocol notes"). Reuse
+        // calibration_sample so it controls firmware sampling time here the
+        // same way it does for Average/Maximum. cal_sample_s_ is uint8_t
+        // (0-255), so it always fits without clamping.
         this->set_config_mode_(true);
-        const uint8_t payload[2] = {0x0A, 0x00};
+        const uint8_t payload[2] = {lowbyte(this->cal_sample_s_), highbyte(this->cal_sample_s_)};
         this->send_command_(CMD_AUTO_THRESHOLD, payload, sizeof(payload));
         this->cal_state_ = CalibrationState::FW_WAITING;
       } else {
@@ -966,17 +1035,10 @@ void LD2410Component::tick_calibration_() {
   }
 
   if (this->cal_state_ == CalibrationState::SAMPLING) {
-    // Accumulate this tick's energy snapshot.
-    for (uint8_t i = 0; i < TOTAL_GATES; i++) {
-      this->cal_move_accum_[i] += this->latest_move_energy_[i];
-      this->cal_still_accum_[i] += this->latest_still_energy_[i];
-      if (this->latest_move_energy_[i] > this->cal_move_max_[i])
-        this->cal_move_max_[i] = this->latest_move_energy_[i];
-      if (this->latest_still_energy_[i] > this->cal_still_max_[i])
-        this->cal_still_max_[i] = this->latest_still_energy_[i];
-    }
-    this->cal_samples_collected_++;
-
+    // Per-frame accumulation happens in handle_periodic_data_() as engineering
+    // frames arrive; this tick only watches the clock for the sample window
+    // to end. Keeping the two apart is what makes cal_samples_collected_ a
+    // true frame count instead of a loop-iteration count.
     if (elapsed_ms >= (uint32_t) this->cal_sample_s_ * 1000) {
       this->compute_thresholds_();
       this->set_engineering_mode(false);
@@ -990,13 +1052,18 @@ void LD2410Component::tick_calibration_() {
 void LD2410Component::compute_thresholds_() {
   if (this->cal_samples_collected_ == 0)
     return;
+  const uint16_t n = this->cal_samples_collected_;
   for (uint8_t i = 0; i < TOTAL_GATES; i++) {
     if (this->cal_mode_ == CalibrationMode::AVERAGE) {
-      this->cal_move_result_[i] = static_cast<uint8_t>(this->cal_move_accum_[i] / this->cal_samples_collected_);
-      this->cal_still_result_[i] = static_cast<uint8_t>(this->cal_still_accum_[i] / this->cal_samples_collected_);
+      this->cal_move_result_[i] =
+          compute_average_threshold(this->cal_move_accum_[i], this->cal_move_sq_accum_[i], n);
+      this->cal_still_result_[i] =
+          compute_average_threshold(this->cal_still_accum_[i], this->cal_still_sq_accum_[i], n);
     } else {  // MAXIMUM
-      this->cal_move_result_[i] = this->cal_move_max_[i];
-      this->cal_still_result_[i] = this->cal_still_max_[i];
+      this->cal_move_result_[i] =
+          clamp_threshold(static_cast<int32_t>(this->cal_move_max_[i]) + THRESHOLD_MAX_MARGIN);
+      this->cal_still_result_[i] =
+          clamp_threshold(static_cast<int32_t>(this->cal_still_max_[i]) + THRESHOLD_MAX_MARGIN);
     }
   }
 }
